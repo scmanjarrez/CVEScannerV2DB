@@ -63,8 +63,8 @@ build ()
 
     if [ $REM -eq 1 ]; then
         rm $OUTPUT > /dev/null 2>&1
-        sqlite3 $OUTPUT < schema.sql
     fi
+    sqlite3 $OUTPUT < schema.sql
 
     suffix=_reading
 
