@@ -1,0 +1,65 @@
+name: Update database and its container
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 1,15 * *"
+
+jobs:
+  update-database:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Pre-setup
+        run: |
+          pip install -r <(curl https://raw.githubusercontent.com/scmanjarrez/CVEScannerV2/master/extra/requirements.txt)
+          echo "MSFV=$(curl -s https://raw.githubusercontent.com/rapid7/metasploit-framework/master/Gemfile.lock | perl -ne '/metasploit-framework\s*\((.*?)\)/ && print $1')-dev" >> $GITHUB_ENV
+          git config --global push.default current
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Retrieve latest database
+        uses: addnab/docker-run-action@v3
+        with:
+          image: scmanjarrez/cvescanner:db
+          options: --rm -v ${{ github.workspace }}:/tmp/cve
+          run: cp cve.db /tmp/cve
+      - name: Update DB
+        run: |
+          sudo chown runner:runner cve.db && sudo rm semicolon_delimited_script
+          python3 <(curl https://raw.githubusercontent.com/scmanjarrez/CVEScannerV2/master/extra/database.py)
+          rm dump*
+          sqlite3 cve.db .dump > dump.sql
+          split -b 25M -d dump.sql dump.p
+          rm dump.sql
+        env:
+          NVD_KEY: ${{secrets.API_KEY}}
+      - name: Upload updated DB
+        uses: actions/upload-artifact@v4
+        with:
+          name: cve.db
+          path: cve.db
+          retention-days: 15
+      - name: Update repository
+        run: |
+          git checkout --orphan latest
+          git add -A
+          git commit -m "Update database (msf $MSFV)"
+          git branch -D master
+          git branch -m master
+          git push -f
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: scmanjarrez/cvescanner:db,scmanjarrez/cvescanner:latest
+          platforms: linux/amd64,linux/arm64,linux/arm/v7
